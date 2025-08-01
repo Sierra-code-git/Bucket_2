@@ -1,0 +1,98 @@
+version: "3.9"
+
+services:
+  rabbit1:
+    image: rabbitmq:4.1.1-management
+    container_name: rabbit1
+    hostname: rabbit1
+    networks:
+      - rabbitmq-net
+    ports:
+      - "5675:5672"
+      - "15675:15672"
+    environment:
+      - RABBITMQ_NODENAME=rabbit1
+    volumes:
+      - rabbit1-data:/var/lib/rabbitmq
+    command: >
+      bash -c "
+        mkdir -p /var/lib/rabbitmq &&
+        echo 'MYSECRETCOOKIEVALUE123' > /var/lib/rabbitmq/.erlang.cookie &&
+        chmod 400 /var/lib/rabbitmq/.erlang.cookie &&
+        chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie &&
+        rabbitmq-server
+      "
+
+  rabbit2:
+    image: rabbitmq:4.1.1-management
+    container_name: rabbit2
+    hostname: rabbit2
+    networks:
+      - rabbitmq-net
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    environment:
+      - RABBITMQ_NODENAME=rabbit2
+    volumes:
+      - rabbit2-data:/var/lib/rabbitmq
+    command: >
+      bash -c "
+        mkdir -p /var/lib/rabbitmq &&
+        echo 'MYSECRETCOOKIEVALUE123' > /var/lib/rabbitmq/.erlang.cookie &&
+        chmod 400 /var/lib/rabbitmq/.erlang.cookie &&
+        chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie &&
+        rabbitmq-server
+      "
+    depends_on:
+      - rabbit1
+
+  rabbit3:
+    image: rabbitmq:4.1.1-management
+    container_name: rabbit3
+    hostname: rabbit3
+    networks:
+      - rabbitmq-net
+    ports:
+      - "5674:5672"
+      - "15674:15672"
+    environment:
+      - RABBITMQ_NODENAME=rabbit3
+      - RABBITMQ_ERLANG_COOKIE=MYSECRETCOOKIEVALUE123
+    volumes:
+      - rabbit3-data:/var/lib/rabbitmq
+    command: >
+      bash -c "
+        mkdir -p /var/lib/rabbitmq &&
+        echo 'MYSECRETCOOKIEVALUE123' > /var/lib/rabbitmq/.erlang.cookie &&
+        chmod 400 /var/lib/rabbitmq/.erlang.cookie &&
+        chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie &&
+        rabbitmq-server
+      "
+    depends_on:
+      - rabbit2
+
+  haproxy:
+    image: haproxy:latest
+    container_name: haproxy
+    ports:
+      - "5672:5672"      # AMQP clients connect here
+      - "15672:15672"    # Web UI access via HAProxy
+      - "8404:8404"      # Optional: HAProxy stats UI
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      - rabbitmq-net
+    depends_on:
+      - rabbit1
+      - rabbit2
+      - rabbit3
+
+networks:
+  rabbitmq-net:
+    driver: bridge
+
+volumes:
+  rabbit1-data:
+  rabbit2-data:
+  rabbit3-data:
