@@ -28,16 +28,12 @@ services:
       - "15675:15672"
     environment:
       - RABBITMQ_NODENAME=rabbit1
+
     volumes:
       - rabbit1-data:/var/lib/rabbitmq
-    command: >
-      bash -c "
-        mkdir -p /var/lib/rabbitmq &&
-        echo 'MYSECRETCOOKIEVALUE123' > /var/lib/rabbitmq/.erlang.cookie &&
-        chmod 400 /var/lib/rabbitmq/.erlang.cookie &&
-        chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie &&
-        rabbitmq-server
-      "
+      - ./config/node1/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+
+    command: rabbitmq-server
 
   rabbit2:
     image: rabbitmq:4.1.1-management
@@ -50,16 +46,11 @@ services:
       - "15673:15672"
     environment:
       - RABBITMQ_NODENAME=rabbit2
+
     volumes:
       - rabbit2-data:/var/lib/rabbitmq
-    command: >
-      bash -c "
-        mkdir -p /var/lib/rabbitmq &&
-        echo 'MYSECRETCOOKIEVALUE123' > /var/lib/rabbitmq/.erlang.cookie &&
-        chmod 400 /var/lib/rabbitmq/.erlang.cookie &&
-        chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie &&
-        rabbitmq-server
-      "
+      - ./config/node2/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+
     depends_on:
       - rabbit1
 
@@ -74,17 +65,11 @@ services:
       - "15674:15672"
     environment:
       - RABBITMQ_NODENAME=rabbit3
-      - RABBITMQ_ERLANG_COOKIE=MYSECRETCOOKIEVALUE123
+
     volumes:
       - rabbit3-data:/var/lib/rabbitmq
-    command: >
-      bash -c "
-        mkdir -p /var/lib/rabbitmq &&
-        echo 'MYSECRETCOOKIEVALUE123' > /var/lib/rabbitmq/.erlang.cookie &&
-        chmod 400 /var/lib/rabbitmq/.erlang.cookie &&
-        chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie &&
-        rabbitmq-server
-      "
+      - ./config/node3/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+
     depends_on:
       - rabbit2
 
@@ -92,9 +77,9 @@ services:
     image: haproxy:latest
     container_name: haproxy
     ports:
-      - "5672:5672"
-      - "15672:15672"
-      - "8404:8404"
+      - "5672:5672" # AMQP clients connect here
+      - "15672:15672" # Web UI access via HAProxy
+      - "8404:8404" # Optional: HAProxy stats UI
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     networks:
@@ -161,6 +146,65 @@ backend rabbitmq_ui_back
 
 ---
 
+## `Check each node cookies`
+
+```bash
+
+docker exec rabbit1 cat /var/lib/rabbitmq/.erlang.cookie
+docker exec rabbit2 cat /var/lib/rabbitmq/.erlang.cookie
+docker exec rabbit3 cat /var/lib/rabbitmq/.erlang.cookie
+
+```
+
+---
+
+## If all cookies are not same then replicate cookies across nodes
+
+## 🔧 `replicate-cookies.sh`
+
+```bash
+#!/bin/bash
+
+NODES=("rabbit1" "rabbit2" "rabbit3")
+
+echo "🔍 Reading cookie from primary node (${NODES[0]})..."
+REFERENCE_COOKIE=$(docker exec "${NODES[0]}" cat /var/lib/rabbitmq/.erlang.cookie 2>/dev/null)
+
+if [ -z "$REFERENCE_COOKIE" ]; then
+  echo "❌ Failed to read cookie from ${NODES[0]}"
+  exit 1
+fi
+
+echo "📦 Cookie on ${NODES[0]}: $REFERENCE_COOKIE"
+echo
+
+for NODE in "${NODES[@]:1}"; do
+  echo "🔍 Checking node: $NODE"
+  NODE_COOKIE=$(docker exec "$NODE" cat /var/lib/rabbitmq/.erlang.cookie 2>/dev/null)
+
+  echo "📦 Cookie on $NODE: $NODE_COOKIE"
+
+  if [ "$NODE_COOKIE" != "$REFERENCE_COOKIE" ]; then
+    echo "❗ Cookie mismatch on $NODE. Replacing with reference from ${NODES[0]}..."
+
+    docker exec "$NODE" bash -c "echo '$REFERENCE_COOKIE' > /var/lib/rabbitmq/.erlang.cookie && \
+      chmod 400 /var/lib/rabbitmq/.erlang.cookie && \
+      chown rabbitmq:rabbitmq /var/lib/rabbitmq/.erlang.cookie"
+
+    echo "✅ Cookie updated on $NODE"
+  else
+    echo "✅ Cookie matches on $NODE"
+  fi
+
+  echo
+done
+
+echo "🎯 Cookie sync complete."
+
+```
+
+---
+
 ## 🔧 `cluster-join.sh`
 
 ```bash
@@ -206,6 +250,7 @@ docker-compose up -d
 ---
 
 ## ✅ Done!
+
 - Manual clustering using consistent Erlang cookie per container
 - Volumes ensure persistence
 - HAProxy balances across all nodes for AMQP + Web UI
